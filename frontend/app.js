@@ -97,8 +97,7 @@ export default function(component) {
     const messages = data.messages || [];
     const workflow = data.workflow || {};
     const lastUserIndex = messages.reduce((last, message, index) => message.role === "user" ? index : last, -1);
-    const pending = workflow.status === "complete" && state.revealPendingJobId === workflow.job_id;
-
+    
     empty.style.display = messages.length ? "none" : "flex";
     conversation.classList.toggle("active", messages.length > 0);
     conversation.innerHTML = "";
@@ -113,7 +112,7 @@ export default function(component) {
       const key = `${i}:${message.content.length}`;
       const isLong = message.content.length > 220 || message.content.split(/\s+/).length > 42;
       const expanded = state.expandedPrompts.has(key);
-      const showThinking = isLastUser && (workflow.active || pending);
+      const showThinking = isLastUser && workflow.active && workflow.status !== "complete";
 
       const pair = document.createElement("div");
       pair.className = "conversation-pair";
@@ -136,7 +135,7 @@ export default function(component) {
               <span class="signal" aria-hidden="true"></span>
               <span class="thinking-phrase" data-thinking-phrase>${esc(workflow.label || "Initializing AskMoina Engine")}</span>
             </div>
-            ${assistant ? `<article class="response ${pending ? "" : "visible"}">
+            ${assistant ? `<article class="response ${workflow.status === "complete" && state.revealPendingJobId === workflow.job_id ? "" : "visible"}">
               <p class="lead"></p>
               <div class="response-body"></div>
               <div class="actions">
@@ -160,6 +159,9 @@ export default function(component) {
       conversation.appendChild(pair);
     }
 
+    if (pending) {
+      qsa(".thinking-phrase", conversation).at(-1)?.scrollIntoView({block:"nearest"});
+    }
   }
 
   function renderModes() {
@@ -200,33 +202,27 @@ export default function(component) {
     };
   }
 
+  function flashCompletion() {
+    const content = qsa(".response-content", qs("#conversation") || root).at(-1);
+    if (!content) return;
+    const flash = document.createElement("div");
+    flash.className = "completion-flash show";
+    flash.innerHTML = '<span class="signal" aria-hidden="true"></span><span>Verification and Audit Complete</span>';
+    const article = content.querySelector(".response");
+    content.insertBefore(flash, article || null);
+    window.setTimeout(() => flash.classList.add("fade"), 220);
+    window.setTimeout(() => flash.remove(), 650);
+  }
+
   function updateComposerGeometry() {
     const app = qs(".app");
     const wrap = qs(".composer-wrap");
-    const modes = qs(".mode-bar");
     if (!app || !wrap) return;
     const rect = wrap.getBoundingClientRect();
-    const modeRect = modes?.getBoundingClientRect();
-    const gap = window.matchMedia?.("(max-width: 720px)")?.matches ? 24 : 30;
+    const gap = window.matchMedia?.("(max-width: 720px)")?.matches ? 26 : 34;
     const viewportGap = Math.max(0, app.clientHeight - rect.top);
     app.style.setProperty("--composer-stack-height", `${Math.ceil(viewportGap)}px`);
     app.style.setProperty("--composer-clearance", `${Math.ceil(viewportGap + gap)}px`);
-    if (modeRect) app.style.setProperty("--mode-top", `${Math.ceil(modeRect.top)}px`);
-  }
-
-  function scrollLatestIntoPosition() {
-    const app = qs(".app");
-    const actions = qsa(".actions", qs("#conversation") || root).at(-1);
-    const modes = qs(".mode-bar");
-    if (!app || !actions || !modes) return;
-    const modeTop = modes.getBoundingClientRect().top;
-    const actionBottom = actions.getBoundingClientRect().bottom;
-    const mobile = window.matchMedia?.("(max-width: 720px)")?.matches;
-    const clearance = mobile ? 82 : 112; // ~30mm on desktop, comfortable mobile equivalent
-    const delta = actionBottom - (modeTop - clearance);
-    const maxScroll = Math.max(0, app.scrollHeight - app.clientHeight);
-    const target = Math.min(maxScroll, Math.max(0, app.scrollTop + delta));
-    if (Math.abs(delta) > 2) app.scrollTo({top: target, behavior:"smooth"});
   }
 
   function sync(data) {
@@ -251,29 +247,18 @@ export default function(component) {
       if (state.revealPendingJobId !== workflow.job_id) {
         state.revealPendingJobId = workflow.job_id;
         renderConversation(data);
-
-        // The final backend milestone is a transition, not a persistent UI row.
-        // Fade it away first, then let the answer settle into view.
-        requestAnimationFrame(() => {
-          const row = qs("[data-thinking-row]");
-          const article = qs(".response");
-          if (row) row.classList.add("completion-fade");
-          if (article) {
-            window.setTimeout(() => article.classList.add("visible"), 150);
-          }
-        });
-
+        flashCompletion();
         clearTimeout(state.revealTimer);
         state.revealTimer = setTimeout(() => {
+          qs(".response")?.classList.add("visible");
           state.revealPendingJobId = null;
-          renderConversation(ctx.data);
           requestAnimationFrame(() => {
             updateComposerGeometry();
             scrollLatestIntoPosition();
             ctx.updateScrollLatest?.();
           });
           sendEvent({type:"ui.response_revealed", job_id:workflow.job_id});
-        }, 560);
+        }, 660);
         return;
       }
     } else if (workflow.status !== "complete") {
@@ -285,10 +270,6 @@ export default function(component) {
       renderConversation(data);
     } else if (workflow.active && (workflow.phase !== prevPhase || workflow.job_id !== prevJob)) {
       updateThinkingLabel(workflow.label);
-    }
-
-    if (workflow.status === "complete" && previousStatus !== "complete" && !state.revealPendingJobId) {
-      renderConversation(data);
     }
 
     updateComposerGeometry();
@@ -431,11 +412,10 @@ export default function(component) {
     scrollLatest?.addEventListener("click", () => {
       if (!appScroll) return;
       appScroll.scrollTo({top: appScroll.scrollHeight, behavior:"smooth"});
-      window.setTimeout(() => scrollLatestIntoPosition(), 420);
+      window.setTimeout(() => scrollLatestIntoPosition(), 460);
     });
     window.addEventListener("resize", updateComposerGeometry, {passive:true});
     ctx.updateScrollLatest = updateScrollLatest;
-    ctx.scrollLatestIntoPosition = scrollLatestIntoPosition;
     updateComposerGeometry();
 
     document.addEventListener("keydown", event => {
