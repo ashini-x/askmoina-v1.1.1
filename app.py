@@ -48,6 +48,10 @@ st.markdown(
       [data-testid="stStatusWidget"],
       [data-testid="stDecoration"],
       [data-testid="stAppDeployButton"] { display: none !important; }
+      html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
+        background: #070707;
+        overflow: hidden !important;
+      }
       [data-testid="stAppViewContainer"],
       [data-testid="stApp"] { background: #070707; }
       section.main > div.block-container {
