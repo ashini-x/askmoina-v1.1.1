@@ -1,0 +1,8 @@
+streamlit>=1.50,<2
+groq>=0.24,<1
+duckduck-search>=8,<9
+python-dotenv>=1,<2
+requests>=2.32,<3
+e2b-code-interpreter>=1,<2
+Markdown>=3.7,<4
+bleach>=6.2,<7

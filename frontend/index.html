@@ -1,0 +1,79 @@
+<div class="askmoina-shell" data-app>
+  <div class="content-scroll" data-scroll>
+    <header class="header">
+      <button class="brand" data-action="brand" aria-label="AskMoina home">
+        AskMoina<span class="brand-dot">.</span>
+      </button>
+      <nav class="header-actions" aria-label="Application navigation">
+        <button class="utility" data-action="history" aria-label="Open history" title="History">
+          <span class="utility-icon">↺</span><span>History</span>
+        </button>
+        <button class="utility" data-action="settings" aria-label="Open settings" title="Settings">
+          <span class="utility-icon">⌘</span>
+        </button>
+      </nav>
+    </header>
+
+    <div class="top-fade" aria-hidden="true"></div>
+
+    <main class="canvas" data-canvas>
+      <section class="empty-state" data-empty>
+        <h1>Begin with a thought.</h1>
+        <div class="empty-suggestions" aria-label="Suggestions">
+          <button data-suggestion="Explore an idea">Explore an idea</button>
+          <button data-suggestion="Make something">Make something</button>
+          <button data-suggestion="Solve a problem">Solve a problem</button>
+          <button data-suggestion="Understand something">Understand something</button>
+        </div>
+      </section>
+      <section class="conversation" data-conversation></section>
+    </main>
+  </div>
+
+  <div class="mode-blur-zone" aria-hidden="true"></div>
+  <div class="bottom-fade" aria-hidden="true"></div>
+
+  <section class="composer-dock" aria-label="AskMoina composer">
+    <div class="mode-wrap">
+      <div class="mode-bar" data-modes role="tablist" aria-label="Modes">
+        <button class="mode" data-mode="logical" role="tab" aria-selected="false">
+          <span class="mode-glyph">◌</span><span class="mode-name">Logical</span>
+        </button>
+        <button class="mode active" data-mode="auto" role="tab" aria-selected="true">
+          <span class="mode-glyph">✦</span><span class="mode-name">Auto</span>
+        </button>
+        <button class="mode" data-mode="creative" role="tab" aria-selected="false">
+          <span class="mode-glyph">✧</span><span class="mode-name">Creative</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="composer">
+      <button class="composer-icon plus" data-action="plus" aria-label="Add" title="Add">+</button>
+      <textarea data-input rows="1" placeholder="Begin with a thought…" aria-label="Prompt"></textarea>
+      <div class="composer-actions">
+        <button class="composer-icon attach" data-action="attach" aria-label="Attachment" title="Attachment">⌕</button>
+        <button class="send" data-action="send" aria-label="Send" title="Send">↑</button>
+      </div>
+    </div>
+    <div class="composer-caption">Enter to send · Shift + Enter for a new line</div>
+  </section>
+
+  <div class="history-overlay" data-history-overlay aria-hidden="true">
+    <div class="history-panel" role="dialog" aria-modal="true" aria-label="History">
+      <div class="panel-head">
+        <div>
+          <div class="panel-kicker">CONVERSATIONS</div>
+          <h2>History</h2>
+        </div>
+        <div class="panel-actions">
+          <button class="panel-icon" data-action="new" aria-label="New conversation" title="New conversation">+</button>
+          <button class="panel-icon" data-action="history-close" aria-label="Close history" title="Close">×</button>
+        </div>
+      </div>
+      <div class="history-list" data-history-list></div>
+    </div>
+  </div>
+
+  <div class="toast" data-toast role="status" aria-live="polite"></div>
+</div>
