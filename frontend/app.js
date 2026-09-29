@@ -27,6 +27,8 @@ export default function(component) {
         thinkingTargetIndex: 0,
         thinkingIndex: 0,
         thinkingStartedAt: 0,
+        thinkingAnimating: false,
+        pendingThinkingIndex: null,
       },
     };
   }
@@ -204,15 +206,21 @@ export default function(component) {
     searching: 1,
     synthesizing: 2,
     sandbox: 3,
-    auditing: 5,
+    auditing: 4,
     complete: 5,
   };
 
   function animateThinkingPhrase(nextIndex) {
     const phrase = qs("[data-thinking-phrase]");
     if (!phrase) return;
-    const next = THINKING_PHRASES[Math.max(0, Math.min(nextIndex, THINKING_PHRASES.length - 1))];
+    const clamped = Math.max(0, Math.min(nextIndex, THINKING_PHRASES.length - 1));
+    const next = THINKING_PHRASES[clamped];
     if (phrase.textContent === next) return;
+
+    if (state.thinkingAnimating) {
+      state.pendingThinkingIndex = clamped;
+      return;
+    }
 
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     if (reduceMotion) {
@@ -220,18 +228,37 @@ export default function(component) {
       phrase.style.opacity = "1";
       phrase.style.filter = "none";
       phrase.style.transform = "none";
+      state.thinkingIndex = clamped;
       return;
     }
 
-    phrase.animate([
-      {opacity: 1, transform: "translateY(0)", filter: "blur(0)"},
-      {opacity: 0, transform: "translateY(-5px)", filter: "blur(2px)"},
-    ], {duration: 320, easing: "ease", fill: "forwards"}).onfinish = () => {
+    state.thinkingAnimating = true;
+    phrase.getAnimations?.().forEach(animation => animation.cancel());
+
+    const out = phrase.animate([
+      {opacity: 1, transform: "translateY(0)", filter: "blur(0px)"},
+      {opacity: 0, transform: "translateY(-4px)", filter: "blur(1.6px)"},
+    ], {duration: 440, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards"});
+
+    out.onfinish = () => {
       phrase.textContent = next;
-      phrase.animate([
-        {opacity: 0, transform: "translateY(6px)", filter: "blur(2px)"},
-        {opacity: 1, transform: "translateY(0)", filter: "blur(0)"},
-      ], {duration: 460, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards"});
+      const incoming = phrase.animate([
+        {opacity: 0, transform: "translateY(4px)", filter: "blur(1.6px)"},
+        {opacity: 1, transform: "translateY(0)", filter: "blur(0px)"},
+      ], {duration: 560, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards"});
+
+      incoming.onfinish = () => {
+        state.thinkingIndex = clamped;
+        state.thinkingAnimating = false;
+        phrase.style.opacity = "1";
+        phrase.style.filter = "blur(0)";
+        phrase.style.transform = "translateY(0)";
+        const queued = state.pendingThinkingIndex;
+        state.pendingThinkingIndex = null;
+        if (queued !== null && queued !== state.thinkingIndex) {
+          requestAnimationFrame(() => animateThinkingPhrase(queued));
+        }
+      };
     };
   }
 
@@ -271,10 +298,11 @@ export default function(component) {
           return;
         }
 
-        // Once the audit stage is reached, keep the last part of the original
-        // sequence alive without faking new backend phases.
-        if (state.thinkingTargetIndex >= 5 && workflow.status !== "complete") {
-          state.thinkingIndex = state.thinkingIndex === 4 ? 5 : 4;
+        // During the audit phase the backend is still working on the same phase.
+        // Gently alternate the final two editorial phrases without inventing
+        // additional backend milestones.
+        if (state.thinkingTargetIndex === 4 && workflow.status !== "complete" && !state.thinkingAnimating) {
+          state.thinkingIndex = state.thinkingIndex === 3 ? 4 : 3;
           animateThinkingPhrase(state.thinkingIndex);
         }
       }, 1180);
@@ -290,6 +318,8 @@ export default function(component) {
     state.thinkingTargetIndex = 0;
     state.thinkingIndex = 0;
     state.thinkingStartedAt = 0;
+    state.thinkingAnimating = false;
+    state.pendingThinkingIndex = null;
   }
 
   function flashCompletion() {
@@ -347,6 +377,7 @@ export default function(component) {
         state.completionJobId = workflow.job_id;
         startThinkingSequence(workflow.job_id, "complete");
         renderConversation(data);
+        requestAnimationFrame(() => animateThinkingPhrase(5));
         clearTimeout(state.revealTimer);
 
         const minThinkingMs = 4200;
@@ -382,8 +413,13 @@ export default function(component) {
 
     if (messagesChanged) {
       renderConversation(data);
+      if (workflow.active) {
+        requestAnimationFrame(() => scrollToLatest("smooth"));
+      }
     } else if (workflow.active && (workflow.phase !== prevPhase || workflow.job_id !== prevJob)) {
-      renderConversation(data);
+      // Keep the existing DOM intact so the phrase transition can finish smoothly.
+      // Only the animation target changes as the real backend phase changes.
+      startThinkingSequence(workflow.job_id, workflow.phase);
     }
 
     if (workflow.status === "complete" && previousStatus !== "complete" && !state.revealPendingJobId) {
@@ -417,12 +453,28 @@ export default function(component) {
     requestAnimationFrame(updateComposerGeometry);
   }
 
+  function scrollToLatest(behavior = "smooth") {
+    const appScroll = qs(".app");
+    if (!appScroll) return;
+    const scrollNow = () => {
+      appScroll.scrollTo({top: appScroll.scrollHeight, behavior});
+    };
+    scrollNow();
+    requestAnimationFrame(() => {
+      scrollNow();
+      requestAnimationFrame(scrollNow);
+    });
+    clearTimeout(state.scrollTimer);
+    state.scrollTimer = window.setTimeout(() => scrollNow(), 180);
+  }
+
   function submitPrompt() {
     const input = qs("#input");
     if (!input || ctx.data?.workflow?.active) return;
     const value = input.value.trim();
     if (!value) return;
     sendEvent({type:"chat.submit", prompt:value, mode:state.mode});
+    scrollToLatest("smooth");
     input.value = "";
     resizeInput();
     showToast("AskMoina is processing");
