@@ -1,9 +1,6 @@
-<div aria-hidden="true" class="pointer-glow"></div>
-
-
 <div class="app" id="app">
 <header class="header">
-<div aria-label="AskMoina." class="brand">AskMoina<span class="brand-dot">.</span></div>
+<div aria-label="AskMoina." class="brand">AskMoina<span aria-hidden="true" class="brand-dot"></span></div>
 <div class="header-actions">
 <button aria-label="Open history" class="utility" id="historyBtn">
 <svg class="icon" viewbox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 5v5h5"></path><path d="M12 7v5l3 2"></path></svg><span>History</span>
@@ -15,6 +12,9 @@
 </header>
 <div aria-hidden="true" class="top-edge-fade"></div>
 <div aria-hidden="true" class="bottom-edge-fade"></div>
+<button class="scroll-latest" id="scrollLatest" type="button" aria-label="Scroll to latest response" title="Scroll to latest response">
+<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+</button>
 <main class="canvas">
 <section class="state" id="emptyState">
 <h1 class="empty-title">Begin with a thought.</h1>
