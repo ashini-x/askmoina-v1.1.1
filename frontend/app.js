@@ -197,6 +197,11 @@ export default function(component) {
         state.revealTimer = setTimeout(() => {
           state.revealPendingJobId = null;
           renderConversation(ctx.data);
+          requestAnimationFrame(() => {
+            const scroller = qs(".app");
+            scroller?.scrollTo({top: scroller.scrollHeight, behavior:"smooth"});
+            ctx.updateScrollLatest?.();
+          });
           sendEvent({type:"ui.response_revealed", job_id:workflow.job_id});
         }, 720);
         return;
@@ -207,6 +212,7 @@ export default function(component) {
     }
 
     renderConversation(data);
+    ctx.updateScrollLatest?.();
 
     if (workflow.active && (workflow.phase !== prevPhase || workflow.job_id !== prevJob)) {
       const phrase = qs(".thinking-phrase:last-child");
@@ -338,11 +344,18 @@ export default function(component) {
     });
 
     const appScroll = qs(".app");
-    appScroll?.addEventListener("scroll", () => {
-      appScroll.classList.add("is-scrolling");
-      clearTimeout(state.scrollTimer);
-      state.scrollTimer = setTimeout(() => appScroll.classList.remove("is-scrolling"), 160);
-    }, {passive:true});
+    const scrollLatest = qs("#scrollLatest");
+    const updateScrollLatest = () => {
+      if (!appScroll || !scrollLatest) return;
+      const messages = (ctx.data?.messages || []).length;
+      const distance = appScroll.scrollHeight - appScroll.scrollTop - appScroll.clientHeight;
+      scrollLatest.classList.toggle("visible", messages > 1 && distance > 160);
+    };
+    appScroll?.addEventListener("scroll", updateScrollLatest, {passive:true});
+    scrollLatest?.addEventListener("click", () => {
+      appScroll?.scrollTo({top: appScroll.scrollHeight, behavior:"smooth"});
+    });
+    ctx.updateScrollLatest = updateScrollLatest;
 
     document.addEventListener("keydown", event => {
       if (event.key === "Escape") closeHistory();
