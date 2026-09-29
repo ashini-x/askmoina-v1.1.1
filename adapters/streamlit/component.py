@@ -19,9 +19,36 @@ _component = st.components.v2.component(
 )
 
 
+_COMPONENT_KEY = "askmoina-main-ui"
+_PENDING_EVENT_KEY = "_askmoina_pending_component_event"
+
+
+def _capture_event() -> None:
+    """Capture the transient trigger during the component rerun.
+
+    Components v2 trigger callbacks run as part of Streamlit's rerun flow.
+    Keeping the event in Session State avoids reading the trigger from the
+    return object while the component is also being refreshed by a fragment.
+    """
+    component_state = st.session_state.get(_COMPONENT_KEY)
+    event = None
+    if component_state is not None:
+        if isinstance(component_state, dict):
+            event = component_state.get("event")
+        else:
+            event = getattr(component_state, "event", None)
+    if event:
+        st.session_state[_PENDING_EVENT_KEY] = event
+
+
 def askmoina_ui(data: dict):
     return _component(
         data=data,
-        key="askmoina-main-ui",
-        on_event_change=lambda: None,
+        key=_COMPONENT_KEY,
+        on_event_change=_capture_event,
     )
+
+
+def pop_pending_event():
+    """Return and clear the next frontend event, if one exists."""
+    return st.session_state.pop(_PENDING_EVENT_KEY, None)
