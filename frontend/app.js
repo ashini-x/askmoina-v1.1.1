@@ -97,7 +97,10 @@ export default function(component) {
     const messages = data.messages || [];
     const workflow = data.workflow || {};
     const lastUserIndex = messages.reduce((last, message, index) => message.role === "user" ? index : last, -1);
-    
+    const isRevealPending = Boolean(
+      workflow.status === "complete" && state.revealPendingJobId && state.revealPendingJobId === workflow.job_id
+    );
+
     empty.style.display = messages.length ? "none" : "flex";
     conversation.classList.toggle("active", messages.length > 0);
     conversation.innerHTML = "";
@@ -112,7 +115,7 @@ export default function(component) {
       const key = `${i}:${message.content.length}`;
       const isLong = message.content.length > 220 || message.content.split(/\s+/).length > 42;
       const expanded = state.expandedPrompts.has(key);
-      const showThinking = isLastUser && workflow.active && workflow.status !== "complete";
+      const showThinking = isLastUser && (workflow.active || isRevealPending);
 
       const pair = document.createElement("div");
       pair.className = "conversation-pair";
@@ -135,7 +138,7 @@ export default function(component) {
               <span class="signal" aria-hidden="true"></span>
               <span class="thinking-phrase" data-thinking-phrase>${esc(workflow.label || "Initializing AskMoina Engine")}</span>
             </div>
-            ${assistant ? `<article class="response ${workflow.status === "complete" && state.revealPendingJobId === workflow.job_id ? "" : "visible"}">
+            ${assistant ? `<article class="response ${isRevealPending ? "" : "visible"}">
               <p class="lead"></p>
               <div class="response-body"></div>
               <div class="actions">
@@ -159,7 +162,7 @@ export default function(component) {
       conversation.appendChild(pair);
     }
 
-    if (pending) {
+    if (isRevealPending) {
       qsa(".thinking-phrase", conversation).at(-1)?.scrollIntoView({block:"nearest"});
     }
   }
@@ -202,18 +205,6 @@ export default function(component) {
     };
   }
 
-  function flashCompletion() {
-    const content = qsa(".response-content", qs("#conversation") || root).at(-1);
-    if (!content) return;
-    const flash = document.createElement("div");
-    flash.className = "completion-flash show";
-    flash.innerHTML = '<span class="signal" aria-hidden="true"></span><span>Verification and Audit Complete</span>';
-    const article = content.querySelector(".response");
-    content.insertBefore(flash, article || null);
-    window.setTimeout(() => flash.classList.add("fade"), 220);
-    window.setTimeout(() => flash.remove(), 650);
-  }
-
   function updateComposerGeometry() {
     const app = qs(".app");
     const wrap = qs(".composer-wrap");
@@ -247,18 +238,25 @@ export default function(component) {
       if (state.revealPendingJobId !== workflow.job_id) {
         state.revealPendingJobId = workflow.job_id;
         renderConversation(data);
-        flashCompletion();
+        const phrase = qs(".thinking-phrase:last-child");
+        if (phrase) {
+          phrase.animate([
+            {opacity:0,transform:"translateY(4px)",filter:"blur(2px)"},
+            {opacity:1,transform:"translateY(0)",filter:"blur(0)"}
+          ], {duration:300,easing:"cubic-bezier(.22,1,.36,1)",fill:"forwards"});
+        }
         clearTimeout(state.revealTimer);
         state.revealTimer = setTimeout(() => {
-          qs(".response")?.classList.add("visible");
           state.revealPendingJobId = null;
+          renderConversation(ctx.data);
           requestAnimationFrame(() => {
             updateComposerGeometry();
-            scrollLatestIntoPosition();
+            const scroller = qs(".app");
+            scroller?.scrollTo({top: scroller.scrollHeight, behavior:"smooth"});
             ctx.updateScrollLatest?.();
           });
           sendEvent({type:"ui.response_revealed", job_id:workflow.job_id});
-        }, 660);
+        }, 640);
         return;
       }
     } else if (workflow.status !== "complete") {
@@ -270,6 +268,10 @@ export default function(component) {
       renderConversation(data);
     } else if (workflow.active && (workflow.phase !== prevPhase || workflow.job_id !== prevJob)) {
       updateThinkingLabel(workflow.label);
+    }
+
+    if (workflow.status === "complete" && previousStatus !== "complete" && !state.revealPendingJobId) {
+      renderConversation(data);
     }
 
     updateComposerGeometry();
@@ -410,9 +412,7 @@ export default function(component) {
     };
     appScroll?.addEventListener("scroll", updateScrollLatest, {passive:true});
     scrollLatest?.addEventListener("click", () => {
-      if (!appScroll) return;
-      appScroll.scrollTo({top: appScroll.scrollHeight, behavior:"smooth"});
-      window.setTimeout(() => scrollLatestIntoPosition(), 460);
+      appScroll?.scrollTo({top: appScroll.scrollHeight, behavior:"smooth"});
     });
     window.addEventListener("resize", updateComposerGeometry, {passive:true});
     ctx.updateScrollLatest = updateScrollLatest;
