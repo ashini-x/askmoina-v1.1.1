@@ -52,11 +52,46 @@ st.markdown(
         background: #070707;
         overflow: hidden !important;
       }
+      html, body {
+        width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        overflow: hidden !important;
+        margin: 0 !important;
+      }
       [data-testid="stAppViewContainer"],
-      [data-testid="stApp"] { background: #070707; }
+      [data-testid="stApp"],
+      [data-testid="stMain"],
+      [data-testid="stAppViewBlockContainer"],
+      [data-testid="stMainBlockContainer"],
+      [data-testid="stVerticalBlockBorderWrapper"],
+      section.main,
+      section.main > div,
+      section.main > div.block-container,
+      section.main > div > div {
+        width: 100% !important;
+        height: 100vh !important;
+        min-height: 0 !important;
+        max-height: 100vh !important;
+        overflow: hidden !important;
+        background: #070707 !important;
+      }
       section.main > div.block-container {
         max-width: none;
         padding: 0 !important;
+      }
+      .st-key-askmoina-main-ui {
+        width: 100% !important;
+        height: 100vh !important;
+        min-height: 0 !important;
+        max-height: 100vh !important;
+        overflow: hidden !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      .st-key-askmoina-main-ui > div {
+        height: 100% !important;
+        min-height: 0 !important;
       }
       div[data-testid="stDecoration"] { display: none; }
     </style>
