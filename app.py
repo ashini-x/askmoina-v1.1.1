@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import streamlit as st
 
-from adapters.streamlit.component import askmoina_ui
+from adapters.streamlit.component import askmoina_ui, pop_pending_event
 from adapters.streamlit.serializer import build_ui_state
 from backend.application.chat_service import ChatService
 from backend.application.jobs import job_manager
@@ -315,7 +315,7 @@ def _handle_event(event: dict) -> None:
 _ensure_state()
 
 
-@st.fragment(run_every=0.4)
+@st.fragment(run_every=0.8)
 def askmoina_runtime() -> None:
     """Render the custom UI and poll the backend job state without full-app churn."""
     workflow = _workflow_snapshot()
@@ -329,8 +329,12 @@ def askmoina_runtime() -> None:
         workflow=workflow,
     )
 
-    ui_result = askmoina_ui(data)
-    event = getattr(ui_result, "event", None) if ui_result is not None else None
+    askmoina_ui(data)
+
+    # Components v2 callbacks capture transient events during the rerun.
+    # Consume exactly one event here rather than reading the component return
+    # object while an auto-refreshing fragment is also redrawing the component.
+    event = pop_pending_event()
     if not event:
         return
 
