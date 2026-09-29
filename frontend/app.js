@@ -16,6 +16,8 @@ export default function(component) {
         workflowStatus: "idle",
         revealPendingJobId: null,
         revealTimer: null,
+        completionTimer: null,
+        completionJobId: null,
         toastTimer: null,
         scrollTimer: null,
         lastMessagesKey: null,
@@ -115,7 +117,7 @@ export default function(component) {
       const key = `${i}:${message.content.length}`;
       const isLong = message.content.length > 220 || message.content.split(/\s+/).length > 42;
       const expanded = state.expandedPrompts.has(key);
-      const showThinking = isLastUser && (workflow.active || isRevealPending);
+      const showThinking = isLastUser && workflow.active && workflow.status !== "complete";
 
       const pair = document.createElement("div");
       pair.className = "conversation-pair";
@@ -205,6 +207,26 @@ export default function(component) {
     };
   }
 
+  function flashCompletion() {
+    const conversation = qs("#conversation");
+    if (!conversation) return;
+    const previous = conversation.querySelector(".completion-flash");
+    previous?.remove();
+
+    const flash = document.createElement("div");
+    flash.className = "completion-flash";
+    flash.innerHTML = '<span class="completion-signal" aria-hidden="true"></span><span>Verification and Audit Complete</span>';
+    conversation.appendChild(flash);
+
+    requestAnimationFrame(() => flash.classList.add("visible"));
+    clearTimeout(state.completionTimer);
+    state.completionTimer = window.setTimeout(() => {
+      flash.classList.remove("visible");
+      flash.classList.add("fade");
+      window.setTimeout(() => flash.remove(), 360);
+    }, 160);
+  }
+
   function updateComposerGeometry() {
     const app = qs(".app");
     const wrap = qs(".composer-wrap");
@@ -237,17 +259,13 @@ export default function(component) {
     if (workflow.status === "complete" && workflow.job_id) {
       if (state.revealPendingJobId !== workflow.job_id) {
         state.revealPendingJobId = workflow.job_id;
+        state.completionJobId = workflow.job_id;
         renderConversation(data);
-        const phrase = qs(".thinking-phrase:last-child");
-        if (phrase) {
-          phrase.animate([
-            {opacity:0,transform:"translateY(4px)",filter:"blur(2px)"},
-            {opacity:1,transform:"translateY(0)",filter:"blur(0)"}
-          ], {duration:300,easing:"cubic-bezier(.22,1,.36,1)",fill:"forwards"});
-        }
+        flashCompletion();
         clearTimeout(state.revealTimer);
         state.revealTimer = setTimeout(() => {
           state.revealPendingJobId = null;
+          state.completionJobId = null;
           renderConversation(ctx.data);
           requestAnimationFrame(() => {
             updateComposerGeometry();
@@ -256,7 +274,7 @@ export default function(component) {
             ctx.updateScrollLatest?.();
           });
           sendEvent({type:"ui.response_revealed", job_id:workflow.job_id});
-        }, 640);
+        }, 520);
         return;
       }
     } else if (workflow.status !== "complete") {
@@ -427,6 +445,7 @@ export default function(component) {
 
   return () => {
     clearTimeout(state.revealTimer);
+    clearTimeout(state.completionTimer);
     clearTimeout(state.scrollTimer);
   };
 }
