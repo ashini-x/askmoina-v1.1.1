@@ -160,9 +160,6 @@ export default function(component) {
       conversation.appendChild(pair);
     }
 
-    if (pending) {
-      qsa(".thinking-phrase", conversation).at(-1)?.scrollIntoView({block:"nearest"});
-    }
   }
 
   function renderModes() {
@@ -206,12 +203,30 @@ export default function(component) {
   function updateComposerGeometry() {
     const app = qs(".app");
     const wrap = qs(".composer-wrap");
+    const modes = qs(".mode-bar");
     if (!app || !wrap) return;
     const rect = wrap.getBoundingClientRect();
-    const gap = window.matchMedia?.("(max-width: 720px)")?.matches ? 26 : 34;
+    const modeRect = modes?.getBoundingClientRect();
+    const gap = window.matchMedia?.("(max-width: 720px)")?.matches ? 24 : 30;
     const viewportGap = Math.max(0, app.clientHeight - rect.top);
     app.style.setProperty("--composer-stack-height", `${Math.ceil(viewportGap)}px`);
     app.style.setProperty("--composer-clearance", `${Math.ceil(viewportGap + gap)}px`);
+    if (modeRect) app.style.setProperty("--mode-top", `${Math.ceil(modeRect.top)}px`);
+  }
+
+  function scrollLatestIntoPosition() {
+    const app = qs(".app");
+    const actions = qsa(".actions", qs("#conversation") || root).at(-1);
+    const modes = qs(".mode-bar");
+    if (!app || !actions || !modes) return;
+    const modeTop = modes.getBoundingClientRect().top;
+    const actionBottom = actions.getBoundingClientRect().bottom;
+    const mobile = window.matchMedia?.("(max-width: 720px)")?.matches;
+    const clearance = mobile ? 82 : 112; // ~30mm on desktop, comfortable mobile equivalent
+    const delta = actionBottom - (modeTop - clearance);
+    const maxScroll = Math.max(0, app.scrollHeight - app.clientHeight);
+    const target = Math.min(maxScroll, Math.max(0, app.scrollTop + delta));
+    if (Math.abs(delta) > 2) app.scrollTo({top: target, behavior:"smooth"});
   }
 
   function sync(data) {
@@ -249,8 +264,8 @@ export default function(component) {
           renderConversation(ctx.data);
           requestAnimationFrame(() => {
             updateComposerGeometry();
-            const scroller = qs(".app");
-            scroller?.scrollTo({top: scroller.scrollHeight, behavior:"smooth"});
+            updateComposerGeometry();
+            scrollLatestIntoPosition();
             ctx.updateScrollLatest?.();
           });
           sendEvent({type:"ui.response_revealed", job_id:workflow.job_id});
@@ -410,10 +425,13 @@ export default function(component) {
     };
     appScroll?.addEventListener("scroll", updateScrollLatest, {passive:true});
     scrollLatest?.addEventListener("click", () => {
-      appScroll?.scrollTo({top: appScroll.scrollHeight, behavior:"smooth"});
+      if (!appScroll) return;
+      appScroll.scrollTo({top: appScroll.scrollHeight, behavior:"smooth"});
+      window.setTimeout(() => scrollLatestIntoPosition(), 420);
     });
     window.addEventListener("resize", updateComposerGeometry, {passive:true});
     ctx.updateScrollLatest = updateScrollLatest;
+    ctx.scrollLatestIntoPosition = scrollLatestIntoPosition;
     updateComposerGeometry();
 
     document.addEventListener("keydown", event => {
