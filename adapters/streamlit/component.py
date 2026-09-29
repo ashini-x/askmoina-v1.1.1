@@ -45,6 +45,8 @@ def askmoina_ui(data: dict):
     return _component(
         data=data,
         key=_COMPONENT_KEY,
+        width="stretch",
+        height="stretch",
         on_event_change=_capture_event,
     )
 
