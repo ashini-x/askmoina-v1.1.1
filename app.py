@@ -35,14 +35,19 @@ st.set_page_config(
     page_icon="•",
     layout="wide",
     initial_sidebar_state="collapsed",
+    menu_items={},
 )
 
 st.markdown(
     """
     <style>
-      #MainMenu, footer { visibility: hidden; }
-      header[data-testid="stHeader"] { background: transparent; }
-      [data-testid="stToolbar"] { visibility: hidden; }
+      #MainMenu,
+      footer,
+      header[data-testid="stHeader"],
+      [data-testid="stToolbar"],
+      [data-testid="stStatusWidget"],
+      [data-testid="stDecoration"],
+      [data-testid="stAppDeployButton"] { display: none !important; }
       [data-testid="stAppViewContainer"],
       [data-testid="stApp"] { background: #070707; }
       section.main > div.block-container {
@@ -306,7 +311,7 @@ def _handle_event(event: dict) -> None:
 _ensure_state()
 
 
-@st.fragment(run_every=0.2)
+@st.fragment(run_every=0.4)
 def askmoina_runtime() -> None:
     """Render the custom UI and poll the backend job state without full-app churn."""
     workflow = _workflow_snapshot()
