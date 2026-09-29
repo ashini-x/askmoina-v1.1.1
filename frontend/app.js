@@ -13,10 +13,13 @@ export default function(component) {
         expandedPrompts: new Set(),
         workflowPhase: "idle",
         workflowJobId: null,
+        workflowStatus: "idle",
         revealPendingJobId: null,
         revealTimer: null,
         toastTimer: null,
         scrollTimer: null,
+        lastMessagesKey: null,
+        geometryFrame: 0,
       },
     };
   }
@@ -172,14 +175,59 @@ export default function(component) {
     });
   }
 
+  function messagesKey(messages) {
+    return JSON.stringify((messages || []).map(message => [message.role, message.content]));
+  }
+
+  function updateThinkingLabel(label) {
+    const phrase = qs("[data-thinking-phrase]");
+    if (!phrase || !label) return;
+    if (phrase.textContent === label) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    if (reduceMotion) {
+      phrase.textContent = label;
+      phrase.style.opacity = "1";
+      phrase.style.filter = "none";
+      phrase.style.transform = "none";
+      return;
+    }
+    phrase.animate([
+      {opacity:1, transform:"translateY(0)", filter:"blur(0)"},
+      {opacity:0, transform:"translateY(-4px)", filter:"blur(1.5px)"}
+    ], {duration:180, easing:"ease", fill:"forwards"}).onfinish = () => {
+      phrase.textContent = label;
+      phrase.animate([
+        {opacity:0, transform:"translateY(4px)", filter:"blur(1.5px)"},
+        {opacity:1, transform:"translateY(0)", filter:"blur(0)"}
+      ], {duration:280, easing:"cubic-bezier(.22,1,.36,1)", fill:"forwards"});
+    };
+  }
+
+  function updateComposerGeometry() {
+    const app = qs(".app");
+    const wrap = qs(".composer-wrap");
+    if (!app || !wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const gap = window.matchMedia?.("(max-width: 720px)")?.matches ? 26 : 34;
+    const viewportGap = Math.max(0, app.clientHeight - rect.top);
+    app.style.setProperty("--composer-stack-height", `${Math.ceil(viewportGap)}px`);
+    app.style.setProperty("--composer-clearance", `${Math.ceil(viewportGap + gap)}px`);
+  }
+
   function sync(data) {
     ctx.data = data || {};
     state.mode = data.mode || state.mode;
     const workflow = data.workflow || {};
     const prevPhase = state.workflowPhase;
     const prevJob = state.workflowJobId;
+    const previousStatus = state.workflowStatus || "idle";
+    const currentMessagesKey = messagesKey(data.messages || []);
+    const messagesChanged = currentMessagesKey !== state.lastMessagesKey;
+
     state.workflowPhase = workflow.phase || "idle";
     state.workflowJobId = workflow.job_id || null;
+    state.workflowStatus = workflow.status || "idle";
+    state.lastMessagesKey = currentMessagesKey;
 
     renderModes();
     renderHistory(data.history || []);
@@ -189,21 +237,24 @@ export default function(component) {
         state.revealPendingJobId = workflow.job_id;
         renderConversation(data);
         const phrase = qs(".thinking-phrase:last-child");
-        phrase?.animate([
-          {opacity:0,transform:"translateY(4px)",filter:"blur(2px)"},
-          {opacity:1,transform:"translateY(0)",filter:"blur(0)"}
-        ], {duration:360,easing:"cubic-bezier(.22,1,.36,1)",fill:"forwards"});
+        if (phrase) {
+          phrase.animate([
+            {opacity:0,transform:"translateY(4px)",filter:"blur(2px)"},
+            {opacity:1,transform:"translateY(0)",filter:"blur(0)"}
+          ], {duration:300,easing:"cubic-bezier(.22,1,.36,1)",fill:"forwards"});
+        }
         clearTimeout(state.revealTimer);
         state.revealTimer = setTimeout(() => {
           state.revealPendingJobId = null;
           renderConversation(ctx.data);
           requestAnimationFrame(() => {
+            updateComposerGeometry();
             const scroller = qs(".app");
             scroller?.scrollTo({top: scroller.scrollHeight, behavior:"smooth"});
             ctx.updateScrollLatest?.();
           });
           sendEvent({type:"ui.response_revealed", job_id:workflow.job_id});
-        }, 720);
+        }, 640);
         return;
       }
     } else if (workflow.status !== "complete") {
@@ -211,13 +262,18 @@ export default function(component) {
       state.revealPendingJobId = null;
     }
 
-    renderConversation(data);
-    ctx.updateScrollLatest?.();
-
-    if (workflow.active && (workflow.phase !== prevPhase || workflow.job_id !== prevJob)) {
-      const phrase = qs(".thinking-phrase:last-child");
-      if (phrase && workflow.label) animateTextSwap(phrase);
+    if (messagesChanged) {
+      renderConversation(data);
+    } else if (workflow.active && (workflow.phase !== prevPhase || workflow.job_id !== prevJob)) {
+      updateThinkingLabel(workflow.label);
     }
+
+    if (workflow.status === "complete" && previousStatus !== "complete" && !state.revealPendingJobId) {
+      renderConversation(data);
+    }
+
+    updateComposerGeometry();
+    ctx.updateScrollLatest?.();
 
     if (data.error && workflow.status === "error") showToast(data.error);
   }
@@ -240,6 +296,7 @@ export default function(component) {
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 220) + "px";
     qs("#sendBtn")?.classList.toggle("disabled", !input.value.trim());
+    requestAnimationFrame(updateComposerGeometry);
   }
 
   function submitPrompt() {
@@ -349,13 +406,15 @@ export default function(component) {
       if (!appScroll || !scrollLatest) return;
       const messages = (ctx.data?.messages || []).length;
       const distance = appScroll.scrollHeight - appScroll.scrollTop - appScroll.clientHeight;
-      scrollLatest.classList.toggle("visible", messages > 1 && distance > 160);
+      scrollLatest.classList.toggle("visible", messages > 1 && distance > 150);
     };
     appScroll?.addEventListener("scroll", updateScrollLatest, {passive:true});
     scrollLatest?.addEventListener("click", () => {
       appScroll?.scrollTo({top: appScroll.scrollHeight, behavior:"smooth"});
     });
+    window.addEventListener("resize", updateComposerGeometry, {passive:true});
     ctx.updateScrollLatest = updateScrollLatest;
+    updateComposerGeometry();
 
     document.addEventListener("keydown", event => {
       if (event.key === "Escape") closeHistory();
