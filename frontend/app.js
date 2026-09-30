@@ -22,13 +22,12 @@ export default function(component) {
         scrollTimer: null,
         lastMessagesKey: null,
         geometryFrame: 0,
-        thinkingTimer: null,
         thinkingJobId: null,
         thinkingTargetIndex: 0,
         thinkingIndex: 0,
         thinkingStartedAt: 0,
-        thinkingAnimating: false,
-        pendingThinkingIndex: null,
+        thinkingAnimatorRunning: false,
+        thinkingRunId: 0,
       },
     };
   }
@@ -210,61 +209,143 @@ export default function(component) {
     complete: 5,
   };
 
-  function animateThinkingPhrase(nextIndex) {
-    const phrase = qs("[data-thinking-phrase]");
-    if (!phrase) return;
-    const clamped = Math.max(0, Math.min(nextIndex, THINKING_PHRASES.length - 1));
-    const next = THINKING_PHRASES[clamped];
-    if (phrase.textContent === next) return;
-
-    if (state.thinkingAnimating) {
-      state.pendingThinkingIndex = clamped;
-      return;
-    }
-
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    if (reduceMotion) {
-      phrase.textContent = next;
-      phrase.style.opacity = "1";
-      phrase.style.filter = "none";
-      phrase.style.transform = "none";
-      state.thinkingIndex = clamped;
-      return;
-    }
-
-    state.thinkingAnimating = true;
-    phrase.getAnimations?.().forEach(animation => animation.cancel());
-
-    const out = phrase.animate([
-      {opacity: 1, transform: "translateY(0)", filter: "blur(0px)"},
-      {opacity: 0, transform: "translateY(-4px)", filter: "blur(1.6px)"},
-    ], {duration: 440, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards"});
-
-    out.onfinish = () => {
-      phrase.textContent = next;
-      const incoming = phrase.animate([
-        {opacity: 0, transform: "translateY(4px)", filter: "blur(1.6px)"},
-        {opacity: 1, transform: "translateY(0)", filter: "blur(0px)"},
-      ], {duration: 560, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards"});
-
-      incoming.onfinish = () => {
-        state.thinkingIndex = clamped;
-        state.thinkingAnimating = false;
-        phrase.style.opacity = "1";
-        phrase.style.filter = "blur(0)";
-        phrase.style.transform = "translateY(0)";
-        const queued = state.pendingThinkingIndex;
-        state.pendingThinkingIndex = null;
-        if (queued !== null && queued !== state.thinkingIndex) {
-          requestAnimationFrame(() => animateThinkingPhrase(queued));
-        }
-      };
-    };
+  function cancelThinkingAnimator() {
+    state.thinkingRunId += 1;
+    state.thinkingAnimatorRunning = false;
   }
 
-  function stopThinkingSequence() {
-    clearInterval(state.thinkingTimer);
-    state.thinkingTimer = null;
+  function sleep(ms, runId) {
+    return new Promise(resolve => {
+      window.setTimeout(() => resolve(runId === state.thinkingRunId), ms);
+    });
+  }
+
+  async function waitForThinkingElement(runId) {
+    for (let i = 0; i < 20; i += 1) {
+      if (runId !== state.thinkingRunId) return null;
+      const phrase = qs('[data-thinking-phrase]');
+      if (phrase) return phrase;
+      await new Promise(requestAnimationFrame);
+    }
+    return qs('[data-thinking-phrase]');
+  }
+
+  async function transitionThinkingPhrase(nextIndex, runId) {
+    if (runId !== state.thinkingRunId) return false;
+    const phrase = await waitForThinkingElement(runId);
+    if (!phrase || runId !== state.thinkingRunId) return false;
+
+    const next = THINKING_PHRASES[Math.max(0, Math.min(nextIndex, THINKING_PHRASES.length - 1))];
+    if (phrase.textContent === next) {
+      state.thinkingIndex = nextIndex;
+      phrase.style.opacity = '1';
+      phrase.style.transform = 'translateY(0)';
+      phrase.style.filter = 'blur(0)';
+      return true;
+    }
+
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    phrase.getAnimations?.().forEach(animation => animation.cancel());
+
+    if (reduceMotion) {
+      phrase.textContent = next;
+      phrase.style.opacity = '1';
+      phrase.style.transform = 'translateY(0)';
+      phrase.style.filter = 'blur(0)';
+      state.thinkingIndex = nextIndex;
+      return true;
+    }
+
+    phrase.style.opacity = '1';
+    phrase.style.transform = 'translateY(0)';
+    phrase.style.filter = 'blur(0)';
+
+    try {
+      const fadeOut = phrase.animate([
+        {opacity: 1, transform: 'translateY(0)', filter: 'blur(0px)'},
+        {opacity: 0, transform: 'translateY(-3px)', filter: 'blur(1.2px)'},
+      ], {duration: 240, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'forwards'});
+      await fadeOut.finished;
+    } catch (_) {
+      return false;
+    }
+    if (runId !== state.thinkingRunId) return false;
+
+    phrase.textContent = next;
+    phrase.style.opacity = '0';
+    phrase.style.transform = 'translateY(3px)';
+    phrase.style.filter = 'blur(1.2px)';
+
+    try {
+      const fadeIn = phrase.animate([
+        {opacity: 0, transform: 'translateY(3px)', filter: 'blur(1.2px)'},
+        {opacity: 1, transform: 'translateY(0)', filter: 'blur(0px)'},
+      ], {duration: 360, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'forwards'});
+      await fadeIn.finished;
+    } catch (_) {
+      return false;
+    }
+
+    if (runId !== state.thinkingRunId) return false;
+    state.thinkingIndex = nextIndex;
+    phrase.style.opacity = '1';
+    phrase.style.transform = 'translateY(0)';
+    phrase.style.filter = 'blur(0)';
+    return true;
+  }
+
+  async function runThinkingAnimator(jobId, runId) {
+    if (state.thinkingAnimatorRunning) return;
+    state.thinkingAnimatorRunning = true;
+
+    const initial = await waitForThinkingElement(runId);
+    if (!initial || runId !== state.thinkingRunId) {
+      state.thinkingAnimatorRunning = false;
+      return;
+    }
+
+    while (runId === state.thinkingRunId && state.thinkingJobId === jobId) {
+      const workflow = ctx.data?.workflow || {};
+      const backendTarget = PHASE_TARGET_INDEX[workflow.phase];
+      if (Number.isInteger(backendTarget)) {
+        state.thinkingTargetIndex = Math.max(state.thinkingTargetIndex, backendTarget);
+      }
+      if (workflow.status === 'complete') {
+        state.thinkingTargetIndex = THINKING_PHRASES.length - 1;
+      }
+
+      if (state.thinkingIndex < state.thinkingTargetIndex) {
+        const moved = await transitionThinkingPhrase(state.thinkingIndex + 1, runId);
+        if (!moved) break;
+        await sleep(500, runId);
+        continue;
+      }
+
+      if (state.thinkingTargetIndex >= 4 && workflow.status === 'running') {
+        const nextIndex = state.thinkingIndex === 4 ? 3 : 4;
+        await sleep(620, runId);
+        if (runId !== state.thinkingRunId) break;
+        const moved = await transitionThinkingPhrase(nextIndex, runId);
+        if (!moved) break;
+        await sleep(460, runId);
+        continue;
+      }
+
+      if (state.thinkingTargetIndex >= 5 && workflow.status === 'complete') {
+        if (state.thinkingIndex < 5) {
+          const moved = await transitionThinkingPhrase(5, runId);
+          if (!moved) break;
+        }
+        await sleep(120, runId);
+        continue;
+      }
+
+      await sleep(180, runId);
+    }
+
+    if (runId === state.thinkingRunId) {
+      state.thinkingAnimatorRunning = false;
+    }
   }
 
   function startThinkingSequence(jobId, phase) {
@@ -272,54 +353,25 @@ export default function(component) {
     const target = PHASE_TARGET_INDEX[phase] ?? 0;
 
     if (state.thinkingJobId !== jobId) {
-      stopThinkingSequence();
+      cancelThinkingAnimator();
       state.thinkingJobId = jobId;
       state.thinkingTargetIndex = target;
       state.thinkingIndex = 0;
       state.thinkingStartedAt = performance.now();
-      const phrase = qs("[data-thinking-phrase]");
-      if (phrase) {
-        phrase.textContent = THINKING_PHRASES[0];
-        phrase.style.opacity = "1";
-        phrase.style.filter = "blur(0)";
-        phrase.style.transform = "translateY(0)";
-      }
-
-      state.thinkingTimer = window.setInterval(() => {
-        const workflow = ctx.data?.workflow || {};
-        if (!workflow.active && workflow.status !== "complete") return;
-
-        const currentTarget = PHASE_TARGET_INDEX[workflow.phase] ?? state.thinkingTargetIndex;
-        state.thinkingTargetIndex = Math.max(state.thinkingTargetIndex, currentTarget);
-
-        if (state.thinkingIndex < state.thinkingTargetIndex) {
-          state.thinkingIndex += 1;
-          animateThinkingPhrase(state.thinkingIndex);
-          return;
-        }
-
-        // During the audit phase the backend is still working on the same phase.
-        // Gently alternate the final two editorial phrases without inventing
-        // additional backend milestones.
-        if (state.thinkingTargetIndex === 4 && workflow.status !== "complete" && !state.thinkingAnimating) {
-          state.thinkingIndex = state.thinkingIndex === 3 ? 4 : 3;
-          animateThinkingPhrase(state.thinkingIndex);
-        }
-      }, 1180);
-      return;
+    } else {
+      state.thinkingTargetIndex = Math.max(state.thinkingTargetIndex, target);
     }
 
-    state.thinkingTargetIndex = Math.max(state.thinkingTargetIndex, target);
+    const runId = state.thinkingRunId;
+    runThinkingAnimator(jobId, runId);
   }
 
   function resetThinkingSequence() {
-    stopThinkingSequence();
+    cancelThinkingAnimator();
     state.thinkingJobId = null;
     state.thinkingTargetIndex = 0;
     state.thinkingIndex = 0;
     state.thinkingStartedAt = 0;
-    state.thinkingAnimating = false;
-    state.pendingThinkingIndex = null;
   }
 
   function flashCompletion() {
@@ -357,54 +409,53 @@ export default function(component) {
     ctx.data = data || {};
     state.mode = data.mode || state.mode;
     const workflow = data.workflow || {};
-    const prevPhase = state.workflowPhase;
-    const prevJob = state.workflowJobId;
-    const previousStatus = state.workflowStatus || "idle";
     const currentMessagesKey = messagesKey(data.messages || []);
     const messagesChanged = currentMessagesKey !== state.lastMessagesKey;
 
-    state.workflowPhase = workflow.phase || "idle";
+    state.workflowPhase = workflow.phase || 'idle';
     state.workflowJobId = workflow.job_id || null;
-    state.workflowStatus = workflow.status || "idle";
+    state.workflowStatus = workflow.status || 'idle';
     state.lastMessagesKey = currentMessagesKey;
 
     renderModes();
     renderHistory(data.history || []);
 
-    if (workflow.status === "complete" && workflow.job_id) {
+    if (workflow.status === 'complete' && workflow.job_id) {
       if (state.revealPendingJobId !== workflow.job_id) {
         state.revealPendingJobId = workflow.job_id;
         state.completionJobId = workflow.job_id;
-        startThinkingSequence(workflow.job_id, "complete");
+        startThinkingSequence(workflow.job_id, 'complete');
         renderConversation(data);
-        requestAnimationFrame(() => animateThinkingPhrase(5));
         clearTimeout(state.revealTimer);
 
         const minThinkingMs = 4200;
-        const elapsed = state.thinkingStartedAt ? performance.now() - state.thinkingStartedAt : minThinkingMs;
+        const elapsed = state.thinkingStartedAt ? performance.now() - state.thinkingStartedAt : 0;
         const remaining = Math.max(0, minThinkingMs - elapsed);
 
-        state.revealTimer = setTimeout(() => {
+        state.revealTimer = window.setTimeout(() => {
           flashCompletion();
-          state.revealTimer = setTimeout(() => {
+          state.revealTimer = window.setTimeout(() => {
             resetThinkingSequence();
             state.revealPendingJobId = null;
             state.completionJobId = null;
             renderConversation(ctx.data);
             requestAnimationFrame(() => {
               updateComposerGeometry();
-              const scroller = qs(".app");
-              scroller?.scrollTo({top: scroller.scrollHeight, behavior:"smooth"});
+              scrollToLatest('smooth');
               ctx.updateScrollLatest?.();
             });
-            sendEvent({type:"ui.response_revealed", job_id:workflow.job_id});
+            sendEvent({type:'ui.response_revealed', job_id:workflow.job_id});
           }, 700);
         }, remaining);
         return;
       }
-    } else if (workflow.status !== "complete") {
+      return;
+    }
+
+    if (workflow.status === 'error') {
       clearTimeout(state.revealTimer);
       state.revealPendingJobId = null;
+      resetThinkingSequence();
     }
 
     if (workflow.active) {
@@ -414,22 +465,17 @@ export default function(component) {
     if (messagesChanged) {
       renderConversation(data);
       if (workflow.active) {
-        requestAnimationFrame(() => scrollToLatest("smooth"));
+        requestAnimationFrame(() => scrollToLatest('smooth'));
       }
-    } else if (workflow.active && (workflow.phase !== prevPhase || workflow.job_id !== prevJob)) {
-      // Keep the existing DOM intact so the phrase transition can finish smoothly.
-      // Only the animation target changes as the real backend phase changes.
+    } else if (workflow.active) {
+      // Keep the thinking DOM node intact. Only the animator target changes.
       startThinkingSequence(workflow.job_id, workflow.phase);
-    }
-
-    if (workflow.status === "complete" && previousStatus !== "complete" && !state.revealPendingJobId) {
-      renderConversation(data);
     }
 
     updateComposerGeometry();
     ctx.updateScrollLatest?.();
 
-    if (data.error && workflow.status === "error") showToast(data.error);
+    if (data.error && workflow.status === 'error') showToast(data.error);
   }
 
   function openHistory() {
@@ -597,6 +643,6 @@ export default function(component) {
     clearTimeout(state.revealTimer);
     clearTimeout(state.completionTimer);
     clearTimeout(state.scrollTimer);
-    stopThinkingSequence();
+    cancelThinkingAnimator();
   };
 }
