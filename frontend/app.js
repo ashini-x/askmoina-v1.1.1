@@ -16,18 +16,22 @@ export default function(component) {
         workflowStatus: "idle",
         revealPendingJobId: null,
         revealTimer: null,
-        completionTimer: null,
-        completionJobId: null,
         toastTimer: null,
         scrollTimer: null,
         lastMessagesKey: null,
-        geometryFrame: 0,
-        thinkingJobId: null,
-        thinkingTargetIndex: 0,
-        thinkingIndex: 0,
-        thinkingStartedAt: 0,
-        thinkingAnimatorRunning: false,
-        thinkingRunId: 0,
+        composerResizeFrame: 0,
+        thinking: {
+          jobId: null,
+          index: 0,
+          queue: [],
+          seenSeq: 0,
+          token: 0,
+          timer: null,
+          transitionTimer: null,
+          settledTimer: null,
+          running: false,
+          startedAt: 0,
+        },
       },
     };
   }
@@ -60,34 +64,39 @@ export default function(component) {
     toast.textContent = message;
     toast.classList.add("show");
     clearTimeout(state.toastTimer);
-    state.toastTimer = setTimeout(() => toast.classList.remove("show"), 1600);
+    state.toastTimer = setTimeout(() => toast.classList.remove("show"), 1500);
   }
 
-  function animateTextSwap(text) {
-    if (!text) return;
-    text.animate([
-      {opacity:1, transform:"translateY(0)", filter:"blur(0)"},
-      {opacity:0, transform:"translateY(-5px)", filter:"blur(2px)"}
-    ], {duration:260, easing:"ease", fill:"forwards"}).onfinish = () => {
-      text.animate([
-        {opacity:0, transform:"translateY(5px)", filter:"blur(2px)"},
-        {opacity:1, transform:"translateY(0)", filter:"blur(0)"}
-      ], {duration:420, easing:"cubic-bezier(.22,1,.36,1)", fill:"forwards"});
-    };
-  }
+  const THINKING_PHRASES = [
+    "Thinking through the idea",
+    "Exploring a few directions",
+    "Connecting the pieces",
+    "Working through the details",
+    "Shaping a response",
+    "Almost there",
+    "Verification and Audit Complete",
+  ];
+
+  const PHASE_TARGET_INDEX = {
+    initializing: 0,
+    searching: 1,
+    synthesizing: 2,
+    sandbox: 3,
+    auditing: 4,
+    complete: 6,
+  };
 
   function renderHistory(items) {
     const panel = qs("#historyBackdrop");
     if (!panel) return;
-    const existingSections = qsa(".history-section", panel);
-    existingSections.forEach(section => section.remove());
+    qsa(".history-section.dynamic", panel).forEach(section => section.remove());
     const list = items?.length ? items : [
       {id:"mock-1", title:"Designing a better city", updated_at:"", active:true},
       {id:"mock-2", title:"Product concept", updated_at:"", active:false},
       {id:"mock-3", title:"Interface ideas", updated_at:"", active:false},
     ];
     const section = document.createElement("div");
-    section.className = "history-section";
+    section.className = "history-section dynamic";
     section.innerHTML = `<div class="history-section-label">Conversations</div>` + list.map(item => `
       <button class="entry ${item.active ? "selected" : ""}" data-history="${esc(item.id)}">
         <span class="entry-text">${esc(item.title)}</span>
@@ -95,6 +104,13 @@ export default function(component) {
       </button>
     `).join("");
     panel.querySelector(".history-panel")?.appendChild(section);
+  }
+
+  function thinkingMarkup(phrase) {
+    return `<div class="thinking visible" data-thinking-row>
+      <span class="signal" aria-hidden="true"></span>
+      <span class="thinking-phrase" data-thinking-phrase>${esc(phrase)}</span>
+    </div>`;
   }
 
   function renderConversation(data) {
@@ -105,8 +121,10 @@ export default function(component) {
     const messages = data.messages || [];
     const workflow = data.workflow || {};
     const lastUserIndex = messages.reduce((last, message, index) => message.role === "user" ? index : last, -1);
-    const isRevealPending = Boolean(
-      workflow.status === "complete" && state.revealPendingJobId && state.revealPendingJobId === workflow.job_id
+    const revealPending = Boolean(
+      workflow.status === "complete" &&
+      state.revealPendingJobId &&
+      state.revealPendingJobId === workflow.job_id
     );
 
     empty.style.display = messages.length ? "none" : "flex";
@@ -124,11 +142,12 @@ export default function(component) {
       const isLong = message.content.length > 220 || message.content.split(/\s+/).length > 42;
       const expanded = state.expandedPrompts.has(key);
       const showThinking = isLastUser && (
-        (workflow.active && workflow.status !== "complete") || isRevealPending
+        (workflow.active && workflow.status !== "complete") || revealPending
       );
 
       const pair = document.createElement("div");
       pair.className = "conversation-pair";
+      const currentPhrase = THINKING_PHRASES[state.thinking.index] || THINKING_PHRASES[0];
       pair.innerHTML = `
         <div class="thought-block">
           <div class="thought-rail" aria-hidden="true"></div>
@@ -137,19 +156,15 @@ export default function(component) {
               <p class="thought-text ${isLong ? "long" : ""} ${isLong && !expanded ? "collapsed" : ""}" data-thought-text="${esc(key)}"></p>
               ${isLong ? `<button class="thought-toggle ${expanded ? "expanded" : ""}" data-thought-toggle="${esc(key)}" type="button" aria-label="${expanded ? "Collapse thought" : "Expand thought"}" title="${expanded ? "Collapse thought" : "Expand thought"}">${iconChevron()}</button>` : ""}
             </div>
-            ${isLong ? `<div class="thought-tools"><button class="thought-tool" data-copy-thought="${esc(key)}" type="button" aria-label="Copy thought" title="Copy thought"><span class="tool-icon" aria-hidden="true">${iconCopy()}</span><span class="copy-label">Copy</span></button></div>` : ""}
+            ${isLong ? `<div class="thought-tools"><button class="thought-tool" data-copy-thought="${esc(key)}" type="button" aria-label="Copy thought" title="Copy thought"><span class="tool-icon" aria-hidden="true">${iconCopy()}</span></button></div>` : ""}
           </div>
         </div>
 
         ${(assistant || showThinking) ? `<div class="response-wrap">
           <div class="answer-rail" aria-hidden="true"></div>
           <div class="response-content">
-            <div class="thinking ${showThinking ? "visible" : ""}" data-thinking-row>
-              <span class="signal" aria-hidden="true"></span>
-              <span class="thinking-phrase" data-thinking-phrase>${esc(THINKING_PHRASES[state.thinkingIndex] || "Thinking through the idea")}</span>
-            </div>
-            ${assistant ? `<article class="response ${isRevealPending ? "" : "visible"}">
-              <p class="lead"></p>
+            ${showThinking ? thinkingMarkup(currentPhrase) : ""}
+            ${assistant ? `<article class="response ${revealPending ? "" : "visible"}">
               <div class="response-body"></div>
               <div class="actions">
                 <button class="response-action" data-copy-response type="button">Copy</button>
@@ -164,16 +179,11 @@ export default function(component) {
       pair.querySelector("[data-thought-text]").textContent = message.content;
 
       if (assistant) {
-        const article = pair.querySelector(".response");
-        const body = article?.querySelector(".response-body");
+        const body = pair.querySelector(".response-body");
         if (body) body.innerHTML = assistant.html || `<p>${esc(assistant.content)}</p>`;
       }
 
       conversation.appendChild(pair);
-    }
-
-    if (isRevealPending) {
-      qsa(".thinking-phrase", conversation).at(-1)?.scrollIntoView({block:"nearest"});
     }
   }
 
@@ -191,218 +201,204 @@ export default function(component) {
     return JSON.stringify((messages || []).map(message => [message.role, message.content]));
   }
 
-  const THINKING_PHRASES = [
-    "Thinking through the idea",
-    "Exploring a few directions",
-    "Connecting the pieces",
-    "Working through the details",
-    "Shaping a response",
-    "Almost there",
-  ];
-
-  const PHASE_TARGET_INDEX = {
-    initializing: 0,
-    searching: 1,
-    synthesizing: 2,
-    sandbox: 3,
-    auditing: 4,
-    complete: 5,
-  };
-
-  function cancelThinkingAnimator() {
-    state.thinkingRunId += 1;
-    state.thinkingAnimatorRunning = false;
+  function clearThinkingTimers() {
+    const t = state.thinking;
+    clearTimeout(t.timer);
+    clearTimeout(t.transitionTimer);
+    clearTimeout(t.settledTimer);
+    t.timer = null;
+    t.transitionTimer = null;
+    t.settledTimer = null;
   }
 
-  function sleep(ms, runId) {
-    return new Promise(resolve => {
-      window.setTimeout(() => resolve(runId === state.thinkingRunId), ms);
+  function resetThinkingAnimator() {
+    const t = state.thinking;
+    clearThinkingTimers();
+    t.token += 1;
+    t.jobId = null;
+    t.index = 0;
+    t.queue = [];
+    t.seenSeq = 0;
+    t.running = false;
+    t.startedAt = 0;
+  }
+
+  function readPhaseEvents(workflow) {
+    const t = state.thinking;
+    const jobId = workflow.job_id || null;
+    const events = Array.isArray(workflow.phase_events) ? [...workflow.phase_events] : [];
+
+    if (!jobId) return;
+    if (t.jobId !== jobId) {
+      resetThinkingAnimator();
+      t.jobId = jobId;
+      t.startedAt = performance.now();
+    }
+
+    events.sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0));
+    for (const event of events) {
+      const seq = Number(event.seq || 0);
+      if (!seq || seq <= t.seenSeq) continue;
+      t.seenSeq = seq;
+      const target = PHASE_TARGET_INDEX[event.phase];
+      if (!Number.isInteger(target)) continue;
+      if (target === 6) {
+        if (!t.queue.includes(6)) t.queue.push(6);
+        continue;
+      }
+      if (target > t.index && !t.queue.includes(target)) t.queue.push(target);
+    }
+
+    // Fallback for any older backend snapshot without phase_events.
+    const target = PHASE_TARGET_INDEX[workflow.phase];
+    if (Number.isInteger(target) && target > t.index && !t.queue.includes(target)) {
+      t.queue.push(target);
+    }
+  }
+
+  function getPhraseElement() {
+    return qs("[data-thinking-phrase]");
+  }
+
+  function finishPhraseTransition(token, nextIndex) {
+    const t = state.thinking;
+    if (token !== t.token) return;
+    const phrase = getPhraseElement();
+    if (!phrase) return;
+
+    phrase.classList.remove("is-out");
+    phrase.classList.add("is-in");
+    phrase.textContent = THINKING_PHRASES[nextIndex] || THINKING_PHRASES[0];
+    t.index = nextIndex;
+
+    requestAnimationFrame(() => {
+      if (token !== t.token) return;
+      requestAnimationFrame(() => {
+        if (token !== t.token) return;
+        phrase.classList.remove("is-in");
+        phrase.classList.add("is-resting");
+      });
     });
+
+    t.settledTimer = setTimeout(() => {
+      if (token !== t.token) return;
+      phrase.classList.remove("is-resting");
+      scheduleThinkingPump(80);
+    }, 280);
   }
 
-  async function waitForThinkingElement(runId) {
-    for (let i = 0; i < 20; i += 1) {
-      if (runId !== state.thinkingRunId) return null;
-      const phrase = qs('[data-thinking-phrase]');
-      if (phrase) return phrase;
-      await new Promise(requestAnimationFrame);
+  function transitionToPhrase(nextIndex, token) {
+    const t = state.thinking;
+    if (token !== t.token || nextIndex === t.index) {
+      scheduleThinkingPump(80);
+      return;
     }
-    return qs('[data-thinking-phrase]');
-  }
-
-  async function transitionThinkingPhrase(nextIndex, runId) {
-    if (runId !== state.thinkingRunId) return false;
-    const phrase = await waitForThinkingElement(runId);
-    if (!phrase || runId !== state.thinkingRunId) return false;
-
-    const next = THINKING_PHRASES[Math.max(0, Math.min(nextIndex, THINKING_PHRASES.length - 1))];
-    if (phrase.textContent === next) {
-      state.thinkingIndex = nextIndex;
-      phrase.style.opacity = '1';
-      phrase.style.transform = 'translateY(0)';
-      phrase.style.filter = 'blur(0)';
-      return true;
-    }
-
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-    phrase.getAnimations?.().forEach(animation => animation.cancel());
-
-    if (reduceMotion) {
-      phrase.textContent = next;
-      phrase.style.opacity = '1';
-      phrase.style.transform = 'translateY(0)';
-      phrase.style.filter = 'blur(0)';
-      state.thinkingIndex = nextIndex;
-      return true;
-    }
-
-    phrase.style.opacity = '1';
-    phrase.style.transform = 'translateY(0)';
-    phrase.style.filter = 'blur(0)';
-
-    try {
-      const fadeOut = phrase.animate([
-        {opacity: 1, transform: 'translateY(0)', filter: 'blur(0px)'},
-        {opacity: 0, transform: 'translateY(-3px)', filter: 'blur(1.2px)'},
-      ], {duration: 240, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'forwards'});
-      await fadeOut.finished;
-    } catch (_) {
-      return false;
-    }
-    if (runId !== state.thinkingRunId) return false;
-
-    phrase.textContent = next;
-    phrase.style.opacity = '0';
-    phrase.style.transform = 'translateY(3px)';
-    phrase.style.filter = 'blur(1.2px)';
-
-    try {
-      const fadeIn = phrase.animate([
-        {opacity: 0, transform: 'translateY(3px)', filter: 'blur(1.2px)'},
-        {opacity: 1, transform: 'translateY(0)', filter: 'blur(0px)'},
-      ], {duration: 360, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'forwards'});
-      await fadeIn.finished;
-    } catch (_) {
-      return false;
-    }
-
-    if (runId !== state.thinkingRunId) return false;
-    state.thinkingIndex = nextIndex;
-    phrase.style.opacity = '1';
-    phrase.style.transform = 'translateY(0)';
-    phrase.style.filter = 'blur(0)';
-    return true;
-  }
-
-  async function runThinkingAnimator(jobId, runId) {
-    if (state.thinkingAnimatorRunning) return;
-    state.thinkingAnimatorRunning = true;
-
-    const initial = await waitForThinkingElement(runId);
-    if (!initial || runId !== state.thinkingRunId) {
-      state.thinkingAnimatorRunning = false;
+    const phrase = getPhraseElement();
+    if (!phrase) {
+      scheduleThinkingPump(120);
       return;
     }
 
-    while (runId === state.thinkingRunId && state.thinkingJobId === jobId) {
-      const workflow = ctx.data?.workflow || {};
-      const backendTarget = PHASE_TARGET_INDEX[workflow.phase];
-      if (Number.isInteger(backendTarget)) {
-        state.thinkingTargetIndex = Math.max(state.thinkingTargetIndex, backendTarget);
-      }
-      if (workflow.status === 'complete') {
-        state.thinkingTargetIndex = THINKING_PHRASES.length - 1;
-      }
+    phrase.classList.remove("is-in", "is-resting");
+    phrase.classList.add("is-out");
 
-      if (state.thinkingIndex < state.thinkingTargetIndex) {
-        const moved = await transitionThinkingPhrase(state.thinkingIndex + 1, runId);
-        if (!moved) break;
-        await sleep(500, runId);
-        continue;
-      }
+    clearTimeout(t.transitionTimer);
+    t.transitionTimer = setTimeout(() => finishPhraseTransition(token, nextIndex), 180);
+  }
 
-      if (state.thinkingTargetIndex >= 4 && workflow.status === 'running') {
-        const nextIndex = state.thinkingIndex === 4 ? 3 : 4;
-        await sleep(620, runId);
-        if (runId !== state.thinkingRunId) break;
-        const moved = await transitionThinkingPhrase(nextIndex, runId);
-        if (!moved) break;
-        await sleep(460, runId);
-        continue;
-      }
+  function scheduleThinkingPump(delay = 120) {
+    const t = state.thinking;
+    clearTimeout(t.timer);
+    const token = t.token;
+    t.timer = setTimeout(() => pumpThinking(token), delay);
+  }
 
-      if (state.thinkingTargetIndex >= 5 && workflow.status === 'complete') {
-        if (state.thinkingIndex < 5) {
-          const moved = await transitionThinkingPhrase(5, runId);
-          if (!moved) break;
-        }
-        await sleep(120, runId);
-        continue;
-      }
+  function pumpThinking(token) {
+    const t = state.thinking;
+    if (token !== t.token || !t.jobId) return;
 
-      await sleep(180, runId);
+    const workflow = ctx.data?.workflow || {};
+    if (!workflow.active && workflow.status !== "complete") {
+      t.running = false;
+      return;
     }
 
-    if (runId === state.thinkingRunId) {
-      state.thinkingAnimatorRunning = false;
+    const next = t.queue.shift();
+    if (Number.isInteger(next) && next > t.index) {
+      t.running = true;
+      transitionToPhrase(next, token);
+      return;
+    }
+
+    // During a long audit, softly alternate the two final thinking phrases.
+    if (workflow.status === "running" && t.index >= 4) {
+      t.running = true;
+      const nextIndex = t.index === 4 ? 5 : 4;
+      clearTimeout(t.timer);
+      t.timer = setTimeout(() => transitionToPhrase(nextIndex, token), 820);
+      return;
+    }
+
+    // Completion stays in the same compact status row: Almost there → Audit Complete.
+    if (workflow.status === "complete") {
+      if (t.index < 5) {
+        t.running = true;
+        transitionToPhrase(5, token);
+        return;
+      }
+      if (t.index < 6) {
+        t.running = true;
+        transitionToPhrase(6, token);
+        return;
+      }
+      t.running = false;
+      clearTimeout(state.revealTimer);
+      state.revealTimer = setTimeout(() => revealResponse(workflow.job_id), 260);
+      return;
+    }
+
+    t.running = false;
+  }
+
+  function startThinkingSequence(workflow) {
+    const t = state.thinking;
+    if (!workflow.job_id) return;
+    readPhaseEvents(workflow);
+    if (!t.jobId) return;
+    if (!t.running) {
+      t.running = true;
+      scheduleThinkingPump(80);
     }
   }
 
-  function startThinkingSequence(jobId, phase) {
-    if (!jobId) return;
-    const target = PHASE_TARGET_INDEX[phase] ?? 0;
+  function revealResponse(jobId) {
+    if (state.revealPendingJobId !== jobId) return;
+    clearTimeout(state.revealTimer);
+    resetThinkingAnimator();
+    state.revealPendingJobId = null;
 
-    if (state.thinkingJobId !== jobId) {
-      cancelThinkingAnimator();
-      state.thinkingJobId = jobId;
-      state.thinkingTargetIndex = target;
-      state.thinkingIndex = 0;
-      state.thinkingStartedAt = performance.now();
+    const thinking = qs("[data-thinking-row]");
+    const response = qs(".response");
+
+    if (thinking) {
+      thinking.classList.add("leaving");
+      window.setTimeout(() => thinking.remove(), 280);
+    }
+
+    if (response) {
+      window.setTimeout(() => response.classList.add("visible"), 90);
     } else {
-      state.thinkingTargetIndex = Math.max(state.thinkingTargetIndex, target);
+      renderConversation(ctx.data);
+      window.setTimeout(() => qs(".response")?.classList.add("visible"), 90);
     }
 
-    const runId = state.thinkingRunId;
-    runThinkingAnimator(jobId, runId);
-  }
+    requestAnimationFrame(() => {
+      updateComposerGeometry();
+      scrollToLatest("smooth");
+      ctx.updateScrollLatest?.();
+    });
 
-  function resetThinkingSequence() {
-    cancelThinkingAnimator();
-    state.thinkingJobId = null;
-    state.thinkingTargetIndex = 0;
-    state.thinkingIndex = 0;
-    state.thinkingStartedAt = 0;
-  }
-
-  function flashCompletion() {
-    const conversation = qs("#conversation");
-    if (!conversation) return;
-    const previous = conversation.querySelector(".completion-flash");
-    previous?.remove();
-
-    const flash = document.createElement("div");
-    flash.className = "completion-flash";
-    flash.innerHTML = '<span class="completion-signal" aria-hidden="true"></span><span>Verification and Audit Complete</span>';
-    conversation.appendChild(flash);
-
-    requestAnimationFrame(() => flash.classList.add("visible"));
-    clearTimeout(state.completionTimer);
-    state.completionTimer = window.setTimeout(() => {
-      flash.classList.remove("visible");
-      flash.classList.add("fade");
-      window.setTimeout(() => flash.remove(), 360);
-    }, 160);
-  }
-
-  function updateComposerGeometry() {
-    const app = qs(".app");
-    const wrap = qs(".composer-wrap");
-    if (!app || !wrap) return;
-    const rect = wrap.getBoundingClientRect();
-    const gap = window.matchMedia?.("(max-width: 720px)")?.matches ? 26 : 34;
-    const viewportGap = Math.max(0, app.clientHeight - rect.top);
-    app.style.setProperty("--composer-stack-height", `${Math.ceil(viewportGap)}px`);
-    app.style.setProperty("--composer-clearance", `${Math.ceil(viewportGap + gap)}px`);
+    sendEvent({type:"ui.response_revealed", job_id:jobId});
   }
 
   function sync(data) {
@@ -411,71 +407,57 @@ export default function(component) {
     const workflow = data.workflow || {};
     const currentMessagesKey = messagesKey(data.messages || []);
     const messagesChanged = currentMessagesKey !== state.lastMessagesKey;
+    const jobChanged = workflow.job_id && workflow.job_id !== state.workflowJobId;
 
-    state.workflowPhase = workflow.phase || 'idle';
+    state.workflowPhase = workflow.phase || "idle";
     state.workflowJobId = workflow.job_id || null;
-    state.workflowStatus = workflow.status || 'idle';
+    state.workflowStatus = workflow.status || "idle";
     state.lastMessagesKey = currentMessagesKey;
 
     renderModes();
     renderHistory(data.history || []);
 
-    if (workflow.status === 'complete' && workflow.job_id) {
+    if (workflow.status === "complete" && workflow.job_id) {
       if (state.revealPendingJobId !== workflow.job_id) {
         state.revealPendingJobId = workflow.job_id;
-        state.completionJobId = workflow.job_id;
-        startThinkingSequence(workflow.job_id, 'complete');
+        if (jobChanged || state.thinking.jobId !== workflow.job_id) {
+          resetThinkingAnimator();
+          state.thinking.jobId = workflow.job_id;
+          state.thinking.startedAt = performance.now();
+        }
         renderConversation(data);
+        startThinkingSequence(workflow);
         clearTimeout(state.revealTimer);
-
-        const minThinkingMs = 4200;
-        const elapsed = state.thinkingStartedAt ? performance.now() - state.thinkingStartedAt : 0;
-        const remaining = Math.max(0, minThinkingMs - elapsed);
-
-        state.revealTimer = window.setTimeout(() => {
-          flashCompletion();
-          state.revealTimer = window.setTimeout(() => {
-            resetThinkingSequence();
-            state.revealPendingJobId = null;
-            state.completionJobId = null;
-            renderConversation(ctx.data);
-            requestAnimationFrame(() => {
-              updateComposerGeometry();
-              scrollToLatest('smooth');
-              ctx.updateScrollLatest?.();
-            });
-            sendEvent({type:'ui.response_revealed', job_id:workflow.job_id});
-          }, 700);
-        }, remaining);
-        return;
+        // Safety ceiling only. Normal reveal is scheduled after the compact completion phrase settles.
+        state.revealTimer = setTimeout(() => revealResponse(workflow.job_id), 2800);
       }
       return;
     }
 
-    if (workflow.status === 'error') {
+    if (workflow.status === "error") {
       clearTimeout(state.revealTimer);
       state.revealPendingJobId = null;
-      resetThinkingSequence();
+      resetThinkingAnimator();
     }
 
     if (workflow.active) {
-      startThinkingSequence(workflow.job_id, workflow.phase);
+      startThinkingSequence(workflow);
     }
 
     if (messagesChanged) {
       renderConversation(data);
-      if (workflow.active) {
-        requestAnimationFrame(() => scrollToLatest('smooth'));
+      if (workflow.active || state.revealPendingJobId) {
+        // A message append recreates the thinking node; restart the runner against the new DOM.
+        state.thinking.running = false;
+        scheduleThinkingPump(60);
       }
-    } else if (workflow.active) {
-      // Keep the thinking DOM node intact. Only the animator target changes.
-      startThinkingSequence(workflow.job_id, workflow.phase);
+      if (workflow.active) requestAnimationFrame(() => scrollToLatest("smooth"));
     }
 
     updateComposerGeometry();
     ctx.updateScrollLatest?.();
 
-    if (data.error && workflow.status === 'error') showToast(data.error);
+    if (data.error && workflow.status === "error") showToast(data.error);
   }
 
   function openHistory() {
@@ -496,22 +478,27 @@ export default function(component) {
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 220) + "px";
     qs("#sendBtn")?.classList.toggle("disabled", !input.value.trim());
-    requestAnimationFrame(updateComposerGeometry);
+    clearTimeout(state.composerResizeFrame);
+    state.composerResizeFrame = requestAnimationFrame(updateComposerGeometry);
+  }
+
+  function updateComposerGeometry() {
+    const app = qs(".app");
+    const wrap = qs(".composer-wrap");
+    if (!app || !wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const gap = window.matchMedia?.("(max-width: 720px)")?.matches ? 22 : 28;
+    const viewportGap = Math.max(0, app.clientHeight - rect.top);
+    app.style.setProperty("--composer-stack-height", `${Math.ceil(viewportGap)}px`);
+    app.style.setProperty("--composer-clearance", `${Math.ceil(viewportGap + gap)}px`);
   }
 
   function scrollToLatest(behavior = "smooth") {
     const appScroll = qs(".app");
     if (!appScroll) return;
-    const scrollNow = () => {
-      appScroll.scrollTo({top: appScroll.scrollHeight, behavior});
-    };
+    const scrollNow = () => appScroll.scrollTo({top: appScroll.scrollHeight, behavior});
     scrollNow();
-    requestAnimationFrame(() => {
-      scrollNow();
-      requestAnimationFrame(scrollNow);
-    });
-    clearTimeout(state.scrollTimer);
-    state.scrollTimer = window.setTimeout(() => scrollNow(), 180);
+    requestAnimationFrame(scrollNow);
   }
 
   function submitPrompt() {
@@ -534,7 +521,6 @@ export default function(component) {
       state.mode = mode.dataset.mode;
       renderModes();
       sendEvent({type:"mode.select", mode:state.mode});
-      showToast(`${mode.querySelector(".mode-name")?.textContent || state.mode} mode`);
     }));
 
     qsa(".suggestion").forEach(button => button.addEventListener("click", () => {
@@ -625,9 +611,7 @@ export default function(component) {
       scrollLatest.classList.toggle("visible", messages > 1 && distance > 150);
     };
     appScroll?.addEventListener("scroll", updateScrollLatest, {passive:true});
-    scrollLatest?.addEventListener("click", () => {
-      appScroll?.scrollTo({top: appScroll.scrollHeight, behavior:"smooth"});
-    });
+    scrollLatest?.addEventListener("click", () => appScroll?.scrollTo({top:appScroll.scrollHeight, behavior:"smooth"}));
     window.addEventListener("resize", updateComposerGeometry, {passive:true});
     ctx.updateScrollLatest = updateScrollLatest;
     updateComposerGeometry();
@@ -641,8 +625,8 @@ export default function(component) {
 
   return () => {
     clearTimeout(state.revealTimer);
-    clearTimeout(state.completionTimer);
+    clearTimeout(state.toastTimer);
     clearTimeout(state.scrollTimer);
-    cancelThinkingAnimator();
+    resetThinkingAnimator();
   };
 }
