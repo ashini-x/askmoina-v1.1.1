@@ -22,6 +22,8 @@ class JobState:
     error_label: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    phase_seq: int = 0
+    phase_events: list[dict] = field(default_factory=list)
 
     def snapshot(self) -> dict:
         return {
@@ -36,6 +38,7 @@ class JobState:
             "sandbox_used": self.result.sandbox_used if self.result else None,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "phase_events": list(self.phase_events),
         }
 
 
@@ -101,6 +104,13 @@ class ChatJobManager:
             job.status = "running"
             job.phase = phase
             job.label = label
+            job.phase_seq += 1
+            job.phase_events.append({
+                "seq": job.phase_seq,
+                "phase": phase,
+                "label": label,
+                "at": datetime.now(timezone.utc).isoformat(),
+            })
             job.updated_at = datetime.now(timezone.utc).isoformat()
 
     def _run(
@@ -128,6 +138,14 @@ class ChatJobManager:
                     job.status = "complete"
                     job.phase = "complete"
                     job.label = "Verification and Audit Complete"
+                    if not job.phase_events or job.phase_events[-1].get("phase") != "complete":
+                        job.phase_seq += 1
+                        job.phase_events.append({
+                            "seq": job.phase_seq,
+                            "phase": "complete",
+                            "label": "Verification and Audit Complete",
+                            "at": datetime.now(timezone.utc).isoformat(),
+                        })
                     job.updated_at = datetime.now(timezone.utc).isoformat()
         except RateLimitError as exc:
             with self._lock:
